@@ -1113,7 +1113,7 @@ struct WorkerClientSendHandler {
               // treat the output as uint64_t[] instead of double[] to avoid type punning issues with be64toh
               log->info("Starting writing row {} to out buffer", rowIdx);
               for(uint64_t colIdx = 0; colIdx < numCols; ++colIdx) {
-                  rowbuf[colIdx] = *(matrix->LockedBuffer(rowIdx, colIdx));
+                  rowbuf[colIdx] = *(matrix->LockedBuffer(matrix->LocalRow(rowIdx), colIdx));
               }
               log->info("Filled temporary buffer");
               auto invals = reinterpret_cast<const uint64_t*>(rowbuf.data());
