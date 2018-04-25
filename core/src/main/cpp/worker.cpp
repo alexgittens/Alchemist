@@ -39,8 +39,7 @@ struct Worker {
   }
 
   void receiveMatrixBlocks(MatrixHandle handle);
-  void sendMatrixRows(MatrixHandle handle, size_t numCols, const std::vector<WorkerId> &layout,
-      const std::vector<uint64_t> &localRowIndices, const std::vector<double> &localData);
+  void sendMatrixRows(MatrixHandle handle, const std::vector<WorkerId> &layout, const El::AbstractDistMatrix<double> * matrix);
   int main();
 };
 
@@ -992,23 +991,7 @@ void  MatrixGetRowsCommand::run(Worker * self) const {
 
   self->log->info("sending over {} rows with {} cols", numRowsFromMe, numCols);
 
-  std::vector<uint64_t> localRowIndices; // maps rows in the matrix to rows in the local storage
-  std::vector<double> localData(numCols * numRowsFromMe);
-
-  localRowIndices.reserve(numRowsFromMe);
-  matrix->ReservePulls(numCols * numRowsFromMe);
-  for(uint64_t curRowIdx = 0; localRowIndices.size() < numRowsFromMe; curRowIdx++) {
-    if( layout[curRowIdx] == self->id ) {
-      localRowIndices.push_back(curRowIdx);
-      for(uint64_t col = 0; col < numCols; col++) {
-        matrix->QueuePull(curRowIdx, col);
-      }
-    }
-  }
-  matrix->ProcessPullQueue(&localData[0]);
-  self->log->info("pulled the {} rows needed to this rank, now sending them over", numRowsFromMe);
-
-  self->sendMatrixRows(handle, matrix->Width(), layout, localRowIndices, localData);
+  self->sendMatrixRows(handle, layout, matrix);
   self->world.barrier();
 }
 
@@ -1055,19 +1038,19 @@ struct WorkerClientSendHandler {
   short pollEvents;
   std::vector<char> inbuf;
   std::vector<char> outbuf;
+  std::vector<double> rowbuf;
   size_t inpos;
   size_t outpos;
-  const std::vector<uint64_t> &localRowIndices;
-  const std::vector<double> &localData;
+  const El::AbstractDistMatrix<double> * matrix;
   MatrixHandle handle;
   const size_t numCols;
 
   // only set POLLOUT when have data to send
   // sends 0x3 code (uint32), then matrix handle (uint32), then row index (long = uint64_t)
   // localData contains the rows of localRowIndices in order
-  WorkerClientSendHandler(int sock, std::shared_ptr<spdlog::logger> log, MatrixHandle handle, size_t numCols, const std::vector<uint64_t> &localRowIndices, const std::vector<double> &localData) :
-    sock(sock), log(log), pollEvents(POLLIN), inbuf(16), outbuf(8 + numCols * 8), inpos(0), outpos(0),
-    localRowIndices(localRowIndices), localData(localData), handle(handle), numCols(numCols) {
+  WorkerClientSendHandler(int sock, std::shared_ptr<spdlog::logger> log, MatrixHandle handle, const El::AbstractDistMatrix<double> * matrix) :
+    sock(sock), log(log), pollEvents(POLLIN), inbuf(16), outbuf(8 + numCols * 8), rowbuf(numCols), inpos(0), outpos(0),
+    matrix(matrix), handle(handle), numCols(matrix->Width()) {
   }
 
   ~WorkerClientSendHandler() {
@@ -1126,16 +1109,19 @@ struct WorkerClientSendHandler {
               dataPtr += 4;
               uint64_t rowIdx = htobe64(*(uint64_t*)dataPtr);
               dataPtr += 8;
-              auto localRowOffsetIter = std::find(localRowIndices.begin(), localRowIndices.end(), rowIdx);
-              ENSURE(localRowOffsetIter != localRowIndices.end());
-              auto localRowOffset = localRowOffsetIter - localRowIndices.begin();
               *reinterpret_cast<uint64_t*>(&outbuf[0]) = be64toh(numCols * 8);
               // treat the output as uint64_t[] instead of double[] to avoid type punning issues with be64toh
-              auto invals = reinterpret_cast<const uint64_t*>(&localData[numCols * localRowOffset]);
-              auto outvals = reinterpret_cast<uint64_t*>(&outbuf[8]);
-              for(uint64_t idx = 0; idx < numCols; ++idx) {
-                outvals[idx] = be64toh(invals[idx]);
+              log->info("Starting writing row {} to out buffer", rowIdx);
+              for(uint64_t colIdx = 0; colIdx < numCols; ++colIdx) {
+                  rowbuf[colIdx] = *(matrix->LockedBuffer(rowIdx, colIdx));
               }
+              log->info("Filled temporary buffer");
+              auto invals = reinterpret_cast<const uint64_t*>(rowbuf.data());
+              auto outvals = reinterpret_cast<uint64_t*>(&outbuf[8]);
+              for(uint64_t colIdx = 0; colIdx < numCols; ++colIdx) {
+                outvals[colIdx] = be64toh(invals[colIdx]);
+              }
+              log->info("Finished writing row {} to out buffer", rowIdx);
               inpos = 0;
               pollEvents = POLLOUT; // after parsing the request, send the data
               break;
@@ -1294,8 +1280,7 @@ struct WorkerClientReceiveHandler {
   }
 };
 
-void Worker::sendMatrixRows(MatrixHandle handle, size_t numCols, const std::vector<WorkerId> &layout,
-    const std::vector<uint64_t> &localRowIndices, const std::vector<double> &localData) {
+void Worker::sendMatrixRows(MatrixHandle handle, const std::vector<WorkerId> &layout, const El::AbstractDistMatrix<double> * matrix) {
   auto numRowsFromMe = std::count(layout.begin(), layout.end(), this->id);
   std::vector<std::unique_ptr<WorkerClientSendHandler>> clients;
   std::vector<pollfd> pfds;
@@ -1327,7 +1312,7 @@ void Worker::sendMatrixRows(MatrixHandle handle, size_t numCols, const std::vect
           int clientSock = accept(listenSock, reinterpret_cast<sockaddr*>(&addr), &addrlen);
           ENSURE(addrlen == sizeof(addr));
           ENSURE(fcntl(clientSock, F_SETFL, O_NONBLOCK) != -1);
-          std::unique_ptr<WorkerClientSendHandler> client(new WorkerClientSendHandler(clientSock, log, handle, numCols, localRowIndices, localData));
+          std::unique_ptr<WorkerClientSendHandler> client(new WorkerClientSendHandler(clientSock, log, handle, matrix));
           clients.push_back(std::move(client));
         } else {
           ENSURE(clients[idx]->sock == curSock);
