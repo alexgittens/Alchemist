@@ -68,6 +68,10 @@ else
   rm $SPARK_WORKER_DIR/connection.info
   stop-all.sh
   sleep 1m # give the stops time to percolate
+
+  # resplit the nodes between Spark and Alchemist in case that was changed
+  cat $SPARK_WORKER_DIR/slaves.original | sed -n "1,${ALCHEMISTNODECOUNT}p" > $SPARK_WORKER_DIR/hosts.alchemist
+  cat $SPARK_WORKER_DIR/slaves.original | sed -n "$((${ALCHEMISTNODECOUNT}+1)),\$p" > $SPARK_WORKER_DIR/slaves
 fi
 
 # start spark 

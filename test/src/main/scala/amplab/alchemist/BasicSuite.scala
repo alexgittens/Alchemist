@@ -292,8 +292,7 @@ object BasicSuite {
 
         // // Spark matrix multiply
         val smulStart = ticks()
-        val sparkMatC = sparkMatA.toBlockMatrix(sparkMatA.numRows.toInt, sparkMatA.numCols.toInt).
-                      multiply(sparkMatB.toBlockMatrix(sparkMatB.numRows.toInt, sparkMatB.numCols.toInt)).toIndexedRowMatrix
+        val sparkMatC = sparkMatA.toBlockMatrix().multiply(sparkMatB.toBlockMatrix()).toIndexedRowMatrix
         val smulEnd = ticks()
         System.err.println(s"Spark matrix multiplication time(s): ${(smulEnd - smulStart)/1000.0}")
 

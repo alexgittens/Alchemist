@@ -1089,7 +1089,7 @@ struct WorkerClientSendHandler {
     mpi::communicator world;
     int rowsCompleted = 0;
 
-    // handle reads
+    // handle reads: Spark asks for a row from a given matrix handle
     if(revents & POLLIN && pollEvents & POLLIN) {
       while(!isClosed()) {
         int count = recv(sock, &inbuf[inpos], inbuf.size() - inpos, 0);
