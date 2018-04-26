@@ -39,7 +39,7 @@ struct Worker {
   }
 
   void receiveMatrixBlocks(MatrixHandle handle);
-  void sendMatrixRows(MatrixHandle handle, const std::vector<WorkerId> &layout, const El::AbstractDistMatrix<double> * matrix);
+  void sendMatrixRows(MatrixHandle handle, const El::AbstractDistMatrix<double> * matrix);
   int main();
 };
 
@@ -976,22 +976,51 @@ void MatrixMulCommand::run(Worker *self) const {
   self->world.barrier();
 }
 
-// TODO: should send back blocks of rows instead of rows? maybe conversion on other side is cheaper?
-void  MatrixGetRowsCommand::run(Worker * self) const {
-  uint64_t numRowsFromMe = std::count(layout.begin(), layout.end(), self->id);
-  self->log->info("Sending over {} rows from matrix {}", numRowsFromMe, handle);
+void MatrixGetWorkerRowsCommand::run(Worker * self) const {
   auto search = self->matrices.find(handle);
   if (search != self->matrices.end()) {
-    self->log->info("Found it!");
+    //self->log->info("Found it!");
   } else {
-    self->log->info("Not found it!");
+    self->log->info("Matrix {} not found!", handle.id);
+  }
+  auto matrix = self->matrices[handle].get();
+  auto participatingQ = matrix->LocalHeight() > 0; 
+  self->log->info("Returning my local row indices for matrix {}", handle.id);
+
+  if (participatingQ)
+    self->log->info("I am participating");
+  else
+    self->log->info("I am not participating");
+
+  mpi::reduce(self->world, participatingQ ? 1 : 0, std::plus<int>(), 0);
+
+  self->log->info("Creating vector of local rows");
+  std::vector<uint64_t> rowIndices;
+  for(El::Int rowIdx = 0; rowIdx < matrix->Height(); ++rowIdx)
+    if (matrix->IsLocalRow(rowIdx)) {
+      rowIndices.push_back(rowIdx);
+    }
+
+  for(int workerRank = 1; workerRank < self->world.size(); workerRank++) {
+    if(workerRank == self->world.rank()) 
+      self->world.send(0 ,0, rowIndices);
+    self->world.barrier();
+  }
+}
+
+void  MatrixGetRowsCommand::run(Worker * self) const {
+  auto search = self->matrices.find(handle);
+  if (search != self->matrices.end()) {
+    //self->log->info("Found it!");
+  } else {
+    self->log->info("Matrix {} not found!", handle.id);
   }
   auto matrix = self->matrices[handle].get();
   uint64_t numCols = matrix->Width();
 
-  self->log->info("sending over {} rows with {} cols", numRowsFromMe, numCols);
+  self->log->info("Sending over {} rows from matrix {} with {} cols", matrix->LocalHeight(), handle.id, numCols);
 
-  self->sendMatrixRows(handle, layout, matrix);
+  self->sendMatrixRows(handle, matrix);
   self->world.barrier();
 }
 
@@ -1047,10 +1076,9 @@ struct WorkerClientSendHandler {
 
   // only set POLLOUT when have data to send
   // sends 0x3 code (uint32), then matrix handle (uint32), then row index (long = uint64_t)
-  // localData contains the rows of localRowIndices in order
-  WorkerClientSendHandler(int sock, std::shared_ptr<spdlog::logger> log, MatrixHandle handle, const El::AbstractDistMatrix<double> * matrix) :
+  WorkerClientSendHandler(int sock, std::shared_ptr<spdlog::logger> log, MatrixHandle handle, const El::AbstractDistMatrix<double> * matrix, uint64_t numCols) :
     sock(sock), log(log), pollEvents(POLLIN), inbuf(16), outbuf(8 + numCols * 8), rowbuf(numCols), inpos(0), outpos(0),
-    matrix(matrix), handle(handle), numCols(matrix->Width()) {
+    matrix(matrix), handle(handle), numCols(numCols) {
   }
 
   ~WorkerClientSendHandler() {
@@ -1100,6 +1128,7 @@ struct WorkerClientSendHandler {
           inpos += count;
           ENSURE(inpos <= inbuf.size());
           if(inpos >= 4) {
+            log->info("Here!");
             char *dataPtr = &inbuf[0];
             uint32_t typeCode = be32toh(*(uint32_t*)dataPtr);
             dataPtr += 4;
@@ -1113,7 +1142,7 @@ struct WorkerClientSendHandler {
               // treat the output as uint64_t[] instead of double[] to avoid type punning issues with be64toh
               log->info("Starting writing row {} to out buffer", rowIdx);
               for(uint64_t colIdx = 0; colIdx < numCols; ++colIdx) {
-                  rowbuf[colIdx] = *(matrix->LockedBuffer(matrix->LocalRow(rowIdx), colIdx));
+                  rowbuf[colIdx] = *(matrix->LockedBuffer(matrix->LocalRow(rowIdx), matrix->LocalCol(colIdx)));
               }
               log->info("Filled temporary buffer");
               auto invals = reinterpret_cast<const uint64_t*>(rowbuf.data());
@@ -1280,8 +1309,8 @@ struct WorkerClientReceiveHandler {
   }
 };
 
-void Worker::sendMatrixRows(MatrixHandle handle, const std::vector<WorkerId> &layout, const El::AbstractDistMatrix<double> * matrix) {
-  auto numRowsFromMe = std::count(layout.begin(), layout.end(), this->id);
+void Worker::sendMatrixRows(MatrixHandle handle, const El::AbstractDistMatrix<double> * matrix) {
+  auto numRowsFromMe = matrix->LocalHeight();
   std::vector<std::unique_ptr<WorkerClientSendHandler>> clients;
   std::vector<pollfd> pfds;
   while(numRowsFromMe > 0) {
@@ -1312,7 +1341,7 @@ void Worker::sendMatrixRows(MatrixHandle handle, const std::vector<WorkerId> &la
           int clientSock = accept(listenSock, reinterpret_cast<sockaddr*>(&addr), &addrlen);
           ENSURE(addrlen == sizeof(addr));
           ENSURE(fcntl(clientSock, F_SETFL, O_NONBLOCK) != -1);
-          std::unique_ptr<WorkerClientSendHandler> client(new WorkerClientSendHandler(clientSock, log, handle, matrix));
+          std::unique_ptr<WorkerClientSendHandler> client(new WorkerClientSendHandler(clientSock, log, handle, matrix, matrix->Width()));
           clients.push_back(std::move(client));
         } else {
           ENSURE(clients[idx]->sock == curSock);

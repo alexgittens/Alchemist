@@ -166,15 +166,7 @@ class WorkerClient(val hostname: String, val port: Int) {
     assert(numCols * 8 == inbuf.getLong())
     val vec = new Array[Double](numCols)
     inbuf.asDoubleBuffer().get(vec)
-    //println(s"got row ${rowIndex}")
     return new DenseVector(vec)
-  }
-
-  def getIndexedRowMatrix_partitionComplete(handle: MatrixHandle) = {
-    val outbuf = beginOutput(4)
-    println(s"Finished getting rows on worker")
-    outbuf.putInt(0x4) // typeCode = doneGettingRows
-    sendMessage(outbuf)
   }
 
   def close() = {
@@ -470,6 +462,24 @@ class DriverClient(val istream: InputStream, val ostream: OutputStream) {
     }
   }
 
+  def getWorkerRowIndices(mat: MatrixHandle) : Array[Tuple2[WorkerId, Array[Long]]] = {
+    output.writeInt(0x15)
+    output.writeInt(mat.id)
+    output.flush()
+    if(input.readInt() != 0x1) {
+      throw new ProtocolError()
+    }
+
+    val numParticipatingWorkers = input.readInt()
+
+    (0 until numParticipatingWorkers).map{ workerIdx =>
+      val worker = new WorkerId(input.readInt()) 
+      val numRows = input.readLong()
+      val rowIndices = (0L until numRows).map(_ => input.readLong()).toArray
+      (worker, rowIndices)
+    }.toArray
+  }
+
   def getMatrixDimensions(mat: MatrixHandle) : Tuple2[Long, Int] = {
     output.writeInt(0x3)
     output.writeInt(mat.id)
@@ -480,12 +490,9 @@ class DriverClient(val istream: InputStream, val ostream: OutputStream) {
     return (input.readLong(), input.readLong().toInt)
   }
 
-  // layout maps each partition to a worker id (so has length number of partitions in the spark matrix being retrieved)
-  def getIndexedRowMatrixStart(mat: MatrixHandle, layout: Array[WorkerId]) = {
+  def getIndexedRowMatrixStart(mat: MatrixHandle) = {
     output.writeInt(0x4)
     output.writeInt(mat.id)
-    output.writeLong(layout.length)
-    layout.map(w => output.writeInt(w.id))
     output.flush()
     if(input.readInt() != 0x1) {
       throw new ProtocolError()

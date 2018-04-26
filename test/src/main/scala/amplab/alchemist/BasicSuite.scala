@@ -296,6 +296,11 @@ object BasicSuite {
         val smulEnd = ticks()
         System.err.println(s"Spark matrix multiplication time(s): ${(smulEnd - smulStart)/1000.0}")
 
+        /*
+        val diff = norm(alRes.toDenseVector - sparkMatC.toDenseVector)
+        println(s"The frobenius norm difference between Spark and Alchemist's results is ${diff}")
+        */
+
         al.stop
         sc.stop
     }

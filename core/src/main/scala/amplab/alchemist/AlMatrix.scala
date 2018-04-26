@@ -1,5 +1,6 @@
 package amplab.alchemist
 import org.apache.spark.mllib.linalg.distributed.{IndexedRow, IndexedRowMatrix}
+import org.apache.spark.rdd.RDD
 import scala.math.max
 import java.nio.ByteBuffer
 
@@ -15,28 +16,50 @@ class AlMatrix(val al: Alchemist, val handle: MatrixHandle) {
   // Caches result by default, because may not want to recreate (e.g. if delete referenced matrix on Alchemist side to save memory)
   def getIndexedRowMatrix() : IndexedRowMatrix = {
     val (numRows, numCols) = getDimensions()
-    // TODO:
-    // should map the rows back to the executors using locality information if possible
-    // otherwise shuffle the rows on the MPI side before sending them back to SPARK
 
+    // Alchemist workers indicate which rows they have, the rows are randomly assigned to Spark workers, and they retrieve them from the relevant workers
+    // Ignores non participating workers
+    val workerRowIndices : Array[Tuple2[WorkerId, Array[Long]]] = al.client.getWorkerRowIndices(this.handle)
     val numPartitions = max(al.sc.defaultParallelism, al.client.workerCount)
-    val sacrificialRDD = al.sc.parallelize(0 until numRows.toInt, numPartitions)
-    val layout : Array[WorkerId] = (0 until sacrificialRDD.partitions.size).map(x => new WorkerId(x % al.client.workerCount)).toArray
-    val full_layout : Array[WorkerId] = (layout zip sacrificialRDD.mapPartitions(iter => Iterator.single(iter.size), true).collect()).
-                                          flatMap{ case (workerid, partitionSize) => Array.fill(partitionSize)(workerid) }
+
+    val layout : RDD[Tuple2[WorkerId, Long]] = al.sc.parallelize(
+      workerRowIndices.flatMap{ case (workerid, rowIndices) => Array.fill(rowIndices.length)(workerid) zip rowIndices}, 
+      numPartitions)
+
+    /*
+    println("Here're the (worker, rowIndex) tuples")
+    println(
+      layout.collect().map{ case(workerid, rowIndex) => s"(${workerid.id}, ${rowIndex})" }.mkString(" ")
+    )
+    */
+
     // capture references needed by the closure without capturing `this.al`
     val ctx = al.context
     val handle = this.handle
 
-    al.client.getIndexedRowMatrixStart(handle, full_layout)
-    val rows = sacrificialRDD.mapPartitionsWithIndex( (idx, rowindices) => {
-      val worker = ctx.connectWorker(layout(idx))
-      val result  = rowindices.toList.map { rowIndex =>
-        new IndexedRow(rowIndex, worker.getIndexedRowMatrix_getRow(handle, rowIndex, numCols))
-      }.iterator
-      worker.close()
-      result
+    al.client.getIndexedRowMatrixStart(handle)
+    val rows : RDD[IndexedRow] = layout.mapPartitions( workerRowTuplesIterator => {
+      val workerRowTuples = workerRowTuplesIterator.toArray
+      val uniqueWorkers : Array[WorkerId] = workerRowTuples.map{ case(workerid, rowIndex) => workerid}.distinct
+
+      val workerIterators : Seq[Iterator[IndexedRow]] = 
+        uniqueWorkers.map{ curWorker =>
+          val curRowIndices = workerRowTuples.toArray.filter{ case (workerId, rowIndex) => workerId.id == curWorker.id}.map(_._2)
+          /*
+          println(s"Asking worker ${curWorker.id} for rows:")
+          println(curRowIndices.map(idx => idx.toString).mkString(" "))
+          */
+          val worker = ctx.connectWorker(curWorker)
+          val result = curRowIndices.toList.map { rowIndex => 
+            new IndexedRow(rowIndex, worker.getIndexedRowMatrix_getRow(handle, rowIndex, numCols))
+          }.iterator
+          worker.close()
+          result
+        }
+
+      workerIterators.foldLeft(Iterator[IndexedRow]())(_ ++ _)
     }, preservesPartitioning=true)
+
     val result = new IndexedRowMatrix(rows, numRows, numCols)
     result.rows.cache()
     result.rows.count

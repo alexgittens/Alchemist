@@ -41,6 +41,7 @@ struct Driver {
   void handle_matrixMul();
   void handle_matrixDims();
   void handle_computeThinSVD();
+  void handle_getWorkerRowIndices();
   void handle_getMatrixRows();
   void handle_getTranspose();
   void handle_kmeansClustering();
@@ -124,6 +125,11 @@ int Driver::main() {
       // get matrix dimensions
       case 0x3:
         handle_matrixDims();
+        break;
+
+      // get which workers hold which rows
+      case 0x15:
+        handle_getWorkerRowIndices();
         break;
 
       // return matrix to Spark
@@ -681,17 +687,47 @@ void Driver::handle_matrixDims() {
 
 }
 
+void Driver::handle_getWorkerRowIndices() {
+  MatrixHandle handle{input.readInt()};
+  log->info("Returning distribution of rows of matrix {} to the Alchemist workers to Spark", handle.id);
+
+  MatrixGetWorkerRowsCommand cmd(handle);
+  issue(cmd);
+
+  output.writeInt(0x1);
+  output.flush();
+
+  int numParticipatingWorkers = 0;
+  mpi::reduce(world, (int) 0, numParticipatingWorkers, std::plus<int>(), 0);
+
+  auto numWorkers = world.size() - 1;
+  log->info("{} of {} workers are participating in storing matrix {}", numParticipatingWorkers, numWorkers, handle.id);
+  output.writeInt(numParticipatingWorkers);
+  output.flush();
+
+  std::vector<uint64_t> rowIndices;
+  for(int workerIdx = 0; workerIdx < (world.size()-1); workerIdx++) {
+    world.recv(workerIdx+1, 0, rowIndices);
+    world.barrier();
+    if(rowIndices.size() == 0) {
+      log->info("Worker {} is not participating", workerIdx+1);
+      continue;
+    }
+    output.writeInt(workerIdx);
+    output.writeLong(rowIndices.size());
+    for(auto rowIdx: rowIndices) {
+      output.writeLong(rowIdx);
+    }
+  }
+
+  output.flush();
+}
+
 void Driver::handle_getMatrixRows() {
   MatrixHandle handle{input.readInt()};
-  uint64_t layoutLen = input.readLong();
-  std::vector<uint32_t> layout;
-  layout.reserve(layoutLen);
-  for(uint64_t part = 0; part < layoutLen; ++part) {
-    layout.push_back(input.readInt());
-  }
-  log->info("Returning matrix {} to Spark", handle);
+  log->info("Returning matrix {} to Spark", handle.id);
 
-  MatrixGetRowsCommand cmd(handle, layout);
+  MatrixGetRowsCommand cmd(handle);
   issue(cmd);
 
   // tell Spark to start asking for rows

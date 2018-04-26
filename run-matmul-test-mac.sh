@@ -1,18 +1,18 @@
 #!/bin/bash
 # Assumes that spark-submit is in your PATH
 
-export NUM_ALCHEMIST_RANKS=2
+export NUM_ALCHEMIST_RANKS=4
 export TMPDIR=/tmp
 
 method=MATMUL
-m=10000 
-n=10000
-k=10000
+m=200 
+n=1000
+k=500
 
 partitions=0
 
 spark-submit --verbose\
-  --master local[1] \
+  --master local[2] \
   --driver-memory 4G\
   --class amplab.alchemist.BasicSuite\
   test/target/scala-2.11/alchemist-tests-assembly-0.0.2.jar $method $m $n $k $partitions 2>&1 | tee test-matmul.log
