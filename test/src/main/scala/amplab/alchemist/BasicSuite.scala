@@ -27,7 +27,34 @@ object BasicSuite {
         case "MATMUL" => testMatMul(args.tail)
         case "LSQR" => testLSQR(args.tail)
         case "ADMMKRR" => testADMMKRR(args.tail)
+        case "LAD" => testLAD(args.tail)
     }
+  }
+
+  def testLAD( args : Array[String]) : Unit = {
+    val conf = new SparkConf().setAppName("Alchemist LAD Test")
+    val sc = new SparkContext(conf)
+  
+    System.err.println("test: creating alchemist")
+    val al = new Alchemist(sc)
+    System.err.println("test: done creating alchemist")
+
+    // Only do regression w/ default params
+    var m = args(0).toInt // rows
+    var n = args(1).toInt // columns
+    var partitions = if (args(2).toInt > 0) args(2).toInt else sc.defaultParallelism
+    System.err.println(s"using ${partitions} parallelism for the rdds") 
+
+    val ARows = RandomRDDs.uniformVectorRDD(sc, m, n, partitions)
+    ARows.cache()
+    val sparkMatA = new IndexedRowMatrix(ARows.zipWithIndex.map(x => new IndexedRow(x._2, x._1)))
+    val bRows = RandomRDDs.uniformVectorRDD(sc, m, 1, partitions)
+    val sparkVecb = new IndexedRowMatrix(bRows.zipWithIndex.map(x => new IndexedRow(x._2, x._1)))
+
+    val alMatA = AlMatrix(al, sparkMatA)
+    val alVecb = AlMatrix(al, sparkVecb)
+
+    val solnx = al.LeastAbsoluteDeviations(alMatA, alVecb)
   }
 
   def testADMMKRR( args: Array[String] ): Unit = {

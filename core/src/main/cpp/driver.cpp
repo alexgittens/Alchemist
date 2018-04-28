@@ -46,6 +46,7 @@ struct Driver {
   void handle_getTranspose();
   void handle_kmeansClustering();
   void handle_truncatedSVD();
+  void handle_LeastAbsoluteDeviations();
   void handle_SkylarkKRR();
   void handle_SkylarkLSQR();
   void handle_FactorizedCGSolver();
@@ -175,6 +176,10 @@ int Driver::main() {
 
       case 0x14:
         handle_normalizeMatInPlace();
+        break;
+
+      case 0x16:
+        handle_LeastAbsoluteDeviations();
         break;
 
       default:
@@ -623,6 +628,24 @@ void Driver::handle_truncatedSVD() {
   output.writeInt(UHandle.id);
   output.writeInt(SHandle.id);
   output.writeInt(VHandle.id);
+  output.flush();
+}
+
+void Driver::handle_LeastAbsoluteDeviations() {
+  MatrixHandle Amat{input.readInt()};
+  MatrixHandle bvec{input.readInt()};
+  MatrixHandle xvec = registerMatrix(matrices[Amat].numCols, 1);
+
+  log->info("Computing a least absolute deviations fit using matrix {} and vector {}", Amat.id, bvec.id);
+
+  LeastAbsoluteDeviationsCommand cmd(Amat, bvec, xvec);
+  issue(cmd);
+  world.barrier();
+
+  log->info("Done computing");
+
+  output.writeInt(0x1);
+  output.writeInt(xvec.id);
   output.flush();
 }
 

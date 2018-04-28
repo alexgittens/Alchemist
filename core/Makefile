@@ -37,13 +37,18 @@ ifdef BOOST_DIR
 endif
 
 OBJ_FILES = \
-	$(TARGET_PATH)/kmeans++.o \
 	$(TARGET_PATH)/alchemist.o \
+	$(TARGET_PATH)/kmeanspp.o \
 	$(TARGET_PATH)/driver.o \
+	$(TARGET_PATH)/elemental.o \
+	$(TARGET_PATH)/skylark.o \
+	$(TARGET_PATH)/arpack.o \
+	$(TARGET_PATH)/io.o \
+	$(TARGET_PATH)/utils.o \
 	$(TARGET_PATH)/worker.o \
 	#
 
-$(TARGET_PATH)/%.o: $(SRC_PATH)/cpp/%.cpp $(SRC_PATH)/cpp/alchemist.h $(SRC_PATH)/cpp/alchemistreadhdf5.hpp
+$(TARGET_PATH)/%.o: $(SRC_PATH)/cpp/%.cpp $(SRC_PATH)/cpp/alchemist.h 
 	$(CXX) -c $(CXXFLAGS) $< -o $@
 
 .PHONY: default

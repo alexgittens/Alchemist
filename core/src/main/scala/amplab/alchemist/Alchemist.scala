@@ -354,6 +354,18 @@ class DriverClient(val istream: InputStream, val ostream: OutputStream) {
     return matHandle
   }
 
+  def LeastAbsoluteDeviations(A: MatrixHandle, b: MatrixHandle) : MatrixHandle = {
+    output.writeInt(0x16)
+    output.writeInt(A.id)
+    output.writeInt(b.id)
+
+    if (input.readInt() != 0x1) {
+      throw new ProtocolError()
+    }
+
+    new MatrixHandle(input.readInt())
+  }
+
   def kMeans(mat: MatrixHandle, k : Int = 2, maxIters : Int = 20,
              epsilon: Double = 1e-4, initMode: String = "k-means||", initSteps: Int = 2, seed: Long = 0) : Tuple3[MatrixHandle, MatrixHandle, Int] = {
     val method : Int = initMode match {
@@ -644,5 +656,10 @@ class Alchemist(val mysc: SparkContext) {
   def readHDF5(fname: String, varname: String, colreplicas: Int = 1) : AlMatrix = {
     val matHandle = client.readHDF5(fname, varname, colreplicas)
     new AlMatrix(this, matHandle)
+  }
+
+  def LeastAbsoluteDeviations(A: AlMatrix, b: AlMatrix) : AlMatrix = {
+    val xHandle = client.LeastAbsoluteDeviations(A.handle, b.handle)
+    new AlMatrix(this, xHandle)
   }
 }

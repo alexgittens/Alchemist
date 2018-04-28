@@ -1,11 +1,7 @@
-#ifndef SKYLARK_READHDF5_HPP
-#define SKYLARK_READHDF5_HPP
-
 #include "alchemist.h"
 #include "hdf5.h"
-#include <cmath>
-#include <algorithm>
-#include "spdlog/spdlog.h"
+
+namespace alchemist {
 
 typedef El::DistMatrix<double, El::VR, El::STAR> DistMatrixType;
 typedef El::DistMatrix<int, El::VR, El::STAR> PermVecType;
@@ -216,4 +212,21 @@ void alchemistReadHDF5(std::string fnameIn, std::string varName, DistMatrixType 
     delete allRanksRows;
 }
 
-#endif
+void ReadHDF5Command::run(Worker * self) const {
+    auto log = self->log;
+    typedef El::DistMatrix<double, El::VR, El::STAR> DistMatrixType;
+
+    DistMatrixType *AMat = new DistMatrixType(1, 1, self->grid);
+
+    alchemistReadHDF5(fname, varname, *AMat, log, colreplicas);
+
+    ENSURE(self->matrices.insert(std::make_pair(A, std::unique_ptr<DistMatrix>(AMat))).second);
+    log->info("Read matrix has Frobenius norm {}", El::FrobeniusNorm(*AMat));
+
+    if (self->world.rank() == 1) {
+        self->world.send(0, 0, AMat->Height());
+        self->world.send(0, 0, AMat->Width());
+    }
+    self->world.barrier();
+}
+}

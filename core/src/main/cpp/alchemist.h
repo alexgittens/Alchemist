@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <eigen3/Eigen/Dense>
+#include "spdlog/spdlog.h"
 #include "spdlog/fmt/fmt.h"
 // #include "spdlog/fmt/ostr.h"
 #include "endian.h"
@@ -398,6 +399,27 @@ struct TruncatedSVDCommand : Command {
   }
 };
 
+struct LeastAbsoluteDeviationsCommand : Command {
+  MatrixHandle Amat;
+  MatrixHandle bvec;
+  MatrixHandle xvec;
+
+  explicit LeastAbsoluteDeviationsCommand() {}
+
+  LeastAbsoluteDeviationsCommand(MatrixHandle Amat, MatrixHandle bvec, MatrixHandle xvec):
+    Amat(Amat), bvec(bvec), xvec(xvec) {}
+
+  virtual void run(Worker *self) const;
+
+  template <typename Archive>
+  void serialize(Archive & ar, const unsigned version) {
+    ar & serialization::base_object<Command>(*this);
+    ar & Amat;
+    ar & bvec;
+    ar & xvec;
+  }
+};
+
 struct ThinSVDCommand : Command {
   MatrixHandle mat;
   MatrixHandle Uhandle;
@@ -565,6 +587,31 @@ namespace boost { namespace serialization {
 	}
 }} // namespace boost::serialization
 
+namespace alchemist {
+
+struct Worker {
+  WorkerId id;
+  mpi::communicator world;
+  mpi::communicator peers;
+  El::Grid grid;
+  bool shouldExit;
+  int listenSock;
+  std::map<MatrixHandle, std::unique_ptr<DistMatrix>> matrices;
+  std::shared_ptr<spdlog::logger> log;
+
+  Worker(const mpi::communicator &world, const mpi::communicator &peers) :
+      id(world.rank() - 1), world(world), peers(peers), grid(El::mpi::Comm(peers)),
+      shouldExit(false), listenSock(-1) {
+    ENSURE(peers.rank() == world.rank() - 1);
+  }
+
+  void receiveMatrixBlocks(MatrixHandle handle);
+  void sendMatrixRows(MatrixHandle handle, const El::AbstractDistMatrix<double> * matrix);
+  int main();
+};
+
+}
+
 BOOST_CLASS_EXPORT_KEY(alchemist::MatrixDescriptor);
 BOOST_CLASS_EXPORT_KEY(alchemist::Command);
 BOOST_CLASS_EXPORT_KEY(alchemist::HaltCommand);
@@ -576,6 +623,7 @@ BOOST_CLASS_EXPORT_KEY(alchemist::ThinSVDCommand);
 BOOST_CLASS_EXPORT_KEY(alchemist::TransposeCommand);
 BOOST_CLASS_EXPORT_KEY(alchemist::KMeansCommand);
 BOOST_CLASS_EXPORT_KEY(alchemist::TruncatedSVDCommand);
+BOOST_CLASS_EXPORT_KEY(alchemist::LeastAbsoluteDeviationsCommand);
 BOOST_CLASS_EXPORT_KEY(alchemist::SkylarkKernelSolverCommand);
 BOOST_CLASS_EXPORT_KEY(alchemist::SkylarkLSQRSolverCommand);
 BOOST_CLASS_EXPORT_KEY(alchemist::FactorizedCGSolverCommand);
