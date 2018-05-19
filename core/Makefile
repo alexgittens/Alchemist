@@ -23,7 +23,7 @@ LDFLAGS += -Wl,-rpath,$(ALPREFIX)/lib -fopenmp
 ifeq ($(shell uname), Linux)
 #fix a linkage issue that shouldn't be occurring
 LDFLAGS += "-L$(ALPREFIX)/lib64"
-LDFLAGS += -Wl,-rpath,/opt/intel/compilers_and_libraries_2016.3.210/linux/compiler/lib/intel64_lin/ -L/opt/intel/compilers_and_libraries_2016.3.210/linux/compiler/lib/intel64_lin/ -lirc
+LDFLAGS += -Wl,-rpath,/opt/intel/compilers_and_libraries_2017.2.174/linux/compiler/lib/intel64_lin/ -L/opt/intel/compilers_and_libraries_2017.2.174/linux/compiler/lib/intel64_lin/ -lirc
 endif
 
 ifeq ($(shell uname), Darwin)
