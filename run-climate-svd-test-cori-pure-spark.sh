@@ -15,7 +15,7 @@ sleep 15
 
 # 6177583 by 8096 => 400 GB dataset
 # need about 3x times memory to store, relyout the matrix to do the GEMM needed in the alchemist SVD vs just store the matrix
-k=200
+k=20
 fname=/global/cscratch1/sd/gittens/large-datasets/smallOcean.parquet
 useAlc=0
 

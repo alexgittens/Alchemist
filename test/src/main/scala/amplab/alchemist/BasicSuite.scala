@@ -276,7 +276,7 @@ object BasicSuite {
 
 /*
         computeStart = ticks()
-        val svd = rdd.computeSVD(k, computeU = true) 
+        val svd = rdd.toRowMatrix().computeSVD(k, computeU = true, 1e-9, 300, 1e-10, "dist-eigs") // default Spark computeSVD arguments, except to use distributed eigenvector computation instead of "auto"
         svd.U.rows.count()
         computeEnd = ticks()
         System.err.println(s"Spark timing: svd= ${(computeEnd-computeStart)/1000.0}")

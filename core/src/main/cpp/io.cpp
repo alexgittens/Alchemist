@@ -24,7 +24,7 @@ typedef El::DistMatrix<int, El::VR, El::STAR> PermVecType;
  * @param replicas number of times to replicate the input matrix (replicates column-wise)
  * @param maxMB maximum number of megabytes to read in each rank in a single hdf5 read
  */
-void alchemistReadHDF5(std::string fnameIn, std::string varName, DistMatrixType & Y, 
+void alchemistReadHDF5(std::string fnameIn, std::string varName, DistMatrixType * & Y, 
     const std::shared_ptr<spdlog::logger> log, int replicas = 1, int maxMB = 2000) {
     hid_t file_id, dataset_id, space_id, memspace_id;
     herr_t status;
@@ -35,7 +35,7 @@ void alchemistReadHDF5(std::string fnameIn, std::string varName, DistMatrixType 
     hid_t plist_id;
     hsize_t count[2];
 
-    El::mpi::Comm Comm= Y.Grid().Comm();
+    El::mpi::Comm Comm= Y->Grid().Comm();
     int myRank = El::mpi::Rank(Comm);
     int numProcesses = El::mpi::Size(Comm);
 
@@ -56,12 +56,11 @@ void alchemistReadHDF5(std::string fnameIn, std::string varName, DistMatrixType 
     H5Sget_simple_extent_dims(space_id, dims, NULL);
     log->info("{} rows, {} columns", dims[0], dims[1]);
 
-    DistMatrixType X;
-    X.SetGrid(Y.Grid());
-    X.Resize(dims[0], dims[1]); // HDF5 returns data in row-major format, while Elemental stores it in column-major, so we'll have to transpose each local block in place
+    // HDF5 returns data in row-major format, while Elemental stores it in column-major, so we'll have to transpose each local block in place
+    DistMatrixType * X = new DistMatrixType(dims[0], dims[1], Y->Grid()); 
 
     // figure out which rows to load
-    El::Int myNumRows = X.LocalHeight();
+    El::Int myNumRows = X->LocalHeight();
     El::Int * allRanksRows = new El::Int[numProcesses];
     El::Int myRows[1];
     myRows[0] = myNumRows;
@@ -136,10 +135,10 @@ void alchemistReadHDF5(std::string fnameIn, std::string varName, DistMatrixType 
 
     // HDF5 reads in row major order, Elemental expects local matrix in column major order, so convert
     log->info("Transposing the data from HDF5 format to Elemental format");
-    double * Xbuffer = X.Buffer();
-    El::Int Xldim = X.LDim();
-    for(El::Int j=0; j < X.LocalWidth(); ++j)
-        for(El::Int i=0; i < X.LocalHeight(); ++i)
+    double * Xbuffer = X->Buffer();
+    El::Int Xldim = X->LDim();
+    for(El::Int j=0; j < X->LocalWidth(); ++j)
+        for(El::Int i=0; i < X->LocalHeight(); ++i)
             Xbuffer[i + j*Xldim] = tempTarget[j + i*dims[1]];
     delete[] tempTarget;
 
@@ -196,13 +195,20 @@ void alchemistReadHDF5(std::string fnameIn, std::string varName, DistMatrixType 
     */
 
     // now replicate the cols of X to form the cols of Y
-    log->info("Replicating the rows locally");
-    Y.Resize(dims[0], replicas*dims[1]);
-    double * Ybuffer = Y.Buffer();
-    El::Int Yldim = Y.LDim();
-    for(El::Int j=0; j < Y.LocalWidth(); ++j)
-        for(El::Int i=0; i < Y.LocalHeight(); ++i)
-            Ybuffer[i + j*Yldim] = Xbuffer[i + (j % dims[1])*Xldim];
+    if (replicas > 1) {
+        log->info("Replicating the rows locally");
+        Y->Resize(dims[0], replicas*dims[1]);
+        double * Ybuffer = Y->Buffer();
+        El::Int Yldim = Y->LDim();
+        for(El::Int j=0; j < Y->LocalWidth(); ++j)
+            for(El::Int i=0; i < Y->LocalHeight(); ++i)
+                Ybuffer[i + j*Yldim] = Xbuffer[i + (j % dims[1])*Xldim];
+    } else {
+        log->info("Not replicating columnwise");
+        Y = X;
+        log->info("Size of X: {}-by-{}", X->Height(), X->Width());
+        log->info("Size of Y: {}-by-{}", Y->Height(), Y->Width());
+    }
 
     status = H5Sclose(memspace_id);
     status = H5Sclose(space_id);
@@ -216,9 +222,9 @@ void ReadHDF5Command::run(Worker * self) const {
     auto log = self->log;
     typedef El::DistMatrix<double, El::VR, El::STAR> DistMatrixType;
 
-    DistMatrixType *AMat = new DistMatrixType(1, 1, self->grid);
+    DistMatrixType * AMat = new DistMatrixType(1, 1, self->grid);
 
-    alchemistReadHDF5(fname, varname, *AMat, log, colreplicas);
+    alchemistReadHDF5(fname, varname, AMat, log, colreplicas);
 
     ENSURE(self->matrices.insert(std::make_pair(A, std::unique_ptr<DistMatrix>(AMat))).second);
     log->info("Read matrix has Frobenius norm {}", El::FrobeniusNorm(*AMat));

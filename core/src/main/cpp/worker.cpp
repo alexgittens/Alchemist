@@ -166,7 +166,7 @@ struct WorkerClientSendHandler {
           inpos += count;
           ENSURE(inpos <= inbuf.size());
           if(inpos >= 4) {
-            log->info("Here!");
+            //log->info("Here!");
             char *dataPtr = &inbuf[0];
             uint32_t typeCode = be32toh(*(uint32_t*)dataPtr);
             dataPtr += 4;
@@ -178,17 +178,17 @@ struct WorkerClientSendHandler {
               dataPtr += 8;
               *reinterpret_cast<uint64_t*>(&outbuf[0]) = be64toh(numCols * 8);
               // treat the output as uint64_t[] instead of double[] to avoid type punning issues with be64toh
-              log->info("Starting writing row {} to out buffer", rowIdx);
+              //log->info("Starting writing row {} to out buffer", rowIdx);
               for(uint64_t colIdx = 0; colIdx < numCols; ++colIdx) {
                   rowbuf[colIdx] = *(matrix->LockedBuffer(matrix->LocalRow(rowIdx), matrix->LocalCol(colIdx)));
               }
-              log->info("Filled temporary buffer");
+              //log->info("Filled temporary buffer");
               auto invals = reinterpret_cast<const uint64_t*>(rowbuf.data());
               auto outvals = reinterpret_cast<uint64_t*>(&outbuf[8]);
               for(uint64_t colIdx = 0; colIdx < numCols; ++colIdx) {
                 outvals[colIdx] = be64toh(invals[colIdx]);
               }
-              log->info("Finished writing row {} to out buffer", rowIdx);
+              //log->info("Finished writing row {} to out buffer", rowIdx);
               inpos = 0;
               pollEvents = POLLOUT; // after parsing the request, send the data
               break;

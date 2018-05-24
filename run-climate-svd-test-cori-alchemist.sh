@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH -p debug
-#SBATCH -N 16
+#SBATCH -N 14
 #SBATCH -t 00:30:00
 #SBATCH -e mysparkjob_%j.err
 #SBATCH -o mysparkjob_%j.out
@@ -9,17 +9,18 @@
 #module load collectl
 #start-collectl.sh 
 
-source setup/cori-start-alchemist.sh 14 2
+source setup/cori-start-alchemist.sh 12 2
 sleep 15
 
 # 6177583 by 8096 => 400 GB dataset
 # need about 2.2x times memory to store, relayout the matrix to do the GEMM needed in the alchemist SVD vs just store the matrix
-k=200
-fname=/global/cscratch1/sd/gittens/large-datasets/ocean.h5
+k=20
+#fname=/global/cscratch1/sd/gittens/large-datasets/ocean.h5
+fname=/global/cscratch1/sd/gittens/large-datasets/smallOcean.parquet
 useAlc=1
-loadAlc=1
+loadAlc=0
 varname=/rows
-colreplicas=2
+colreplicas=1
 
 spark-submit --verbose\
   --driver-memory 120G\
